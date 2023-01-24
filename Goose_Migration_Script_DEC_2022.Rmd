@@ -1,0 +1,420 @@
+---
+title: "Goose Migration Sept 2022"
+author: "Shannon"
+date: '2022-09-27'
+output: html_document
+---
+
+
+```{r}
+
+### Set working directory
+setwd("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022")
+
+### Libraries
+library(dplyr) ### Data manipulation
+library(tidyverse) #dataframe manipulation and to remove NAs from columns
+
+########################################################
+### Filtering the data
+########################################################
+
+
+### Load USGS data
+Geese_Es <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/Curley_Ramirez_Geese_Es_202008201701 (3).csv")#1,611,483 obs
+
+### Grab the columns we want
+Goose_data<- Geese_Es %>% select(B_COORD_PRECISION,B_COUNTRY_CODE, B_LAT_DECIMAL_DEGREES, B_LON_DECIMAL_DEGREES, B_SPECIES_ID, B_SPECIES_NAME, BAND_NUM, BANDING_DAY, BANDING_MONTH, BANDING_YEAR, BEARING, DISTANCE, E_COORD_PRECISION, E_COUNTRY_CODE, E_LAT_DECIMAL_DEGREES, E_LON_DECIMAL_DEGREES, ENCOUNTER_MONTH, ENCOUNTER_YEAR, SAME_10_MIN_BLOCK)
+
+### Clean
+rm(Geese_Es)
+
+###Grab the species that we want - removed: All Canada Goose species, Barnacle Goose (9 records) Emporer Goose (201), Integrades (Black X Atlantic Brant Intergrade), (Snow X Blue Goose Intergrade ), (Hyrids, Snow X Ross's Goose Hybrid,  Tule White-fronted Goose, ), And "Blue Geese"
+Goose_data<-Goose_data%>% filter(B_SPECIES_NAME %in% c("Lesser Snow Goose","Ross's Goose","Greater White-fronted Goose","Cackling Goose","Atlantic Brant","Black Brant")) #202,518 obs
+
+###Filter Years (data goes back to 1950)
+Goose_data<-Goose_data%>% filter(BANDING_YEAR >= 1990) #104,820 obs
+Goose_data<-Goose_data%>% filter(BANDING_YEAR <= 2019) #104,768 obs
+
+###Remove encounter year 2020 because that year was only midway compiled when we requested the data
+Goose_data<-Goose_data%>% filter(ENCOUNTER_YEAR <= 2019) #102,011 obs
+
+###Filter months for winter and breeding season
+Goose_data<-Goose_data %>% filter(BANDING_MONTH %in% (5:7)) #62,887 obs
+
+Goose_data<-Goose_data%>% filter(ENCOUNTER_MONTH %in% c(12, 1, 2)) #30,859 obs
+
+### Remove species recorded in same 10 block (to remove bias of birds that did not migrate)
+Goose_data<-Goose_data%>% filter(SAME_10_MIN_BLOCK %in% "N") #30,855 obs
+
+### Remove data with no distance information (these are usually data from hunters without exact dates)
+Goose_data<-Goose_data %>% drop_na(DISTANCE) #30,796 obs
+
+### Remove duplicates (occurs when 2 different people record the same bird at the same time)
+Goose_data<-distinct(Goose_data)#30,768 obs
+
+### Remove breeding records below 50 degrees latitude (retain arctic and subarctic records)
+Goose_data<-Goose_data%>% filter(B_LAT_DECIMAL_DEGREES >= 50) #30,766 obs
+
+### Only retain birds banded in US and CA
+b_country_code<-c("CA", "US")
+Goose_data<-Goose_data%>% filter(B_COUNTRY_CODE %in% b_country_code) #28,634 obs
+
+### and remove birds encounter outside of continental N and S america (rm Russa and Japan)
+table(Goose_data$E_COUNTRY_CODE)
+
+e_country_code<-c("CA", "US", "MX")
+Goose_data<-Goose_data%>% filter(E_COUNTRY_CODE %in% e_country_code) #28,625 obs
+
+### Remove encounter coordinates
+## No need to remove Banding precision but double check
+#table(Goose_data$B_COORD_PRECISION)
+prec_values<-c(0, 1, 10, 11) # categories with higher coordinate resoltuion
+Goose_data<-Goose_data%>% filter(E_COORD_PRECISION %in% prec_values) #28,058 obs
+### see https://www.pwrc.usgs.gov/BBL/manual/inexact.cfm for definitions
+
+### Check for birds that have more than one record to make sure they don't repeat
+more_than_2<-as.data.frame(table(Goose_data$BAND_NUM))
+more_than_2<-subset(more_than_2, subset = more_than_2$Freq>=2) #191 bands repeated 2-5 times
+
+### Make a df pulling just these repeated band numbers to filter, but also remove them from Goose df
+
+### Remove these bands from the original dataset and will return once filtered and examined
+more_than_2_records<-Goose_data %>%
+  filter(BAND_NUM %in% more_than_2$Var1) #423 obs to be examined and filtered
+
+### Remove these bands from the original dataset and will return once filtered and examined
+Goose_data<-Goose_data %>%
+  filter(!BAND_NUM %in% more_than_2$Var1) #27,635 obs
+
+### Check that the difference in goose df matches 565 records to be filtered
+#27635-423=27654 YES
+
+### Group by the unique band numbers and year recorded, then only take the max distance taken from that year
+rm_repeats<-as.data.frame(more_than_2_records %>% group_by(BAND_NUM, ENCOUNTER_YEAR) %>% slice_max(DISTANCE, n=1))#377 records
+
+### rbind back to the original dataset
+Goose_data<-rbind(Goose_data, rm_repeats) #28,005 obs
+
+### Save filtered dataset (which may require more pruning after plotting)
+write.csv(Goose_data, file="Goose_data_filtered_nov2022.csv", row.names = F)
+
+### Clear global environment. Can reload the filtered data set for visualization and plots
+write.csv(hm, file="more_than2.csv", row.names = F )
+
+
+### Lastly, remove birds recorded in dec and following year and take the max
+within_season<-as.data.frame(table(Goose_data_filtered_nov2022$BAND_NUM))
+within_season<-subset(within_season, subset = within_season$Freq>=2) #138 birds recorded more than 2x
+
+### subset by the unique band numbers
+bands<-unique(within_season$Var1)
+
+### Remove these bands from the original dataset and will return once filtered and examined
+Goose_data<-Goose_data_filtered_nov2022 %>%
+  filter(!BAND_NUM %in% within_season$Var1) #27,729 obs
+
+### SC visually inspected all data and retained the farthest dist traveled
+within_season_records<-Goose_data_filtered_nov2022 %>%
+  filter(BAND_NUM %in% within_season$Var1) #276 obs (276+27,729 = 28,005 YES)
+
+### upload the pruned dataset 
+Pruned <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/Pruned.csv") #251 observations
+
+
+### rbind the pruned data
+final_goose_for_clim<-rbind(Goose_data, Pruned)### Overall we have 27, 980 records
+
+write.csv(final_goose_for_clim, file="Final_goose_for_clim.csv", row.names = F)
+
+### filter for climateNA
+breeding_range_clim<-Final_goose_for_clim %>% select(B_SPECIES_NAME, BANDING_YEAR, B_LAT_DECIMAL_DEGREES, B_LON_DECIMAL_DEGREES)
+
+### grab unique breeding locations
+breeding_range_clim<-unique(breeding_range_clim) #1,935 obs
+breeding_range_clim$el<-c(".")
+
+###  
+winter_range_clim<-Final_goose_for_clim %>% select(B_SPECIES_NAME, ENCOUNTER_YEAR, E_LAT_DECIMAL_DEGREES, E_LON_DECIMAL_DEGREES)
+
+### grab unique breeding locations
+winter_range_clim<-unique(winter_range_clim) #19,842 obs
+winter_range_clim$el<-c(".")
+
+
+
+clim_col_names<-c("ID1", "ID2", "lat", "long", "el" )
+
+
+colnames(breeding_range_clim)<-clim_col_names
+colnames(winter_range_clim)<-clim_col_names
+
+write.csv(breeding_range_clim, file="breeding_range_clim.csv", row.names = FALSE)
+write.csv(winter_range_clim, file="winter_range_clim.csv", row.names = FALSE)
+
+
+
+```
+
+
+
+```{r}
+########################################################
+### Adding the Climate Data from ClimateNA
+########################################################
+
+library(dplyr)
+
+### Load full dataset
+Final_goose_for_clim <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/Final_goose_for_clim.csv")
+
+### Breeding range data with all climate variables
+breeding_range_clim_1990.2019MSY <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/breeding_range_clim_1990-2019MSY.csv")
+
+### Grab the columns we want - we need to calculate the variables ourselves since we are looking at May through July for banding records
+breeding_range_clim<-breeding_range_clim_1990.2019MSY %>% select(Year, ID1, ID2, Latitude, Longitude, Tmax05, Tmax06, Tmax07, Tave05, Tave06, Tave07, Tmin05, Tmin06, Tmin07, PPT05, PPT06, PPT07)
+
+
+
+
+### Clean
+rm(breeding_range_clim_1990.2019MSY)
+
+### Match the breeding columns to left join
+colnames(breeding_range_clim)[2:5]<-c("B_SPECIES_NAME", "BANDING_YEAR", "B_LAT_DECIMAL_DEGREES", "B_LON_DECIMAL_DEGREES")
+
+### Only keep rows where Year = BANDING_YEAR
+equal_to_br<- breeding_range_clim %>% filter(Year==BANDING_YEAR)
+
+###Clean
+rm(breeding_range_clim)
+
+### Join the columns
+Goose_with_clim<-left_join(Final_goose_for_clim,equal_to_br)
+
+### remove the year column
+Goose_with_clim<-select(Goose_with_clim, -Year)
+
+### Clean
+rm(Final_goose_for_clim, equal_to_br)
+
+### winter range climate
+winter_range_clim_1990.2019S <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/winter_range_clim_1990-2019S.csv")
+
+
+### Grab the columns we want - we need to calculate the variables ourselves since we are looking at May through July for banding records
+winter_range_clim<-winter_range_clim_1990.2019S %>% select(Year, ID1, ID2, Latitude, Longitude, Tmax_wt, Tmin_wt, Tave_wt, PPT_wt)
+
+### Clean
+rm(winter_range_clim_1990.2019S)
+
+### Match the breeding columns to left join
+colnames(winter_range_clim)[2:5]<-c("B_SPECIES_NAME", "ENCOUNTER_YEAR", "E_LAT_DECIMAL_DEGREES", "E_LON_DECIMAL_DEGREES")
+
+
+### Only keep rows where Year = BANDING_YEAR
+equal_to_wt<- winter_range_clim %>% filter(Year==ENCOUNTER_YEAR) #19,842 obs
+
+
+Goose_with_clim<-left_join(Goose_with_breeding_clim,equal_to_wt)
+
+Goose_with_clim<- select(Goose_with_clim, -Year)
+Goose_with_clim<- select(Goose_with_clim, -winter_year)
+
+###Clean
+rm(winter_range_clim)
+
+
+### Left join
+Goose_with_clim<-left_join(Goose_with_breeding_clim,equal_to_wt)
+
+### Clean
+rm(equal_to_wt, winter_range_clim, Goose_with_breeding_clim)
+
+### Replace all -9999 values with NA
+Goose_with_clim[Goose_with_clim == -9999] <- NA
+
+### Make a column for mean_br temp and precep
+write.csv(Goose_with_clim, file="FINAL_GOOSE_DATA.csv", row.names = F)
+
+
+```
+
+
+
+
+
+
+```{r}
+########################################################
+### BAYESIAN MODELS
+########################################################
+
+### Libraries
+library(rjags)
+library(jagsUI)
+
+### Set wd
+setwd("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022")
+
+### Import data
+Goose_data_filtered_nov2022 <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/Goose_data_filtered_nov2022.csv")
+
+setwd("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/Goose_jags")
+
+# format data for JAGS
+goose_jags_data <- list(
+  y = FINAL_GOOSE_DATA$DISTANCE,
+  x = FINAL_GOOSE_DATA$ENCOUNTER_YEAR,
+  s = as.numeric(as.factor(FINAL_GOOSE_DATA$B_SPECIES_NAME)),
+  Nsubj = length(unique(FINAL_GOOSE_DATA$B_SPECIES_NAME))
+)
+
+# Write the JAGS model (now allowing each spp. to have its own level of "noise"
+cat(file = "goose_model_7SDs.txt",
+"
+data {
+Ntotal <- length(y)
+xm <- mean(x)
+ym <- mean(y)
+xsd <- sd(x)
+ysd <- sd(y)
+for (i in 1:length(y)) {
+  zx[i] <- (x[i] - xm) / xsd
+  zy[i] <- (y[i] - ym) / ysd
+}
+}
+
+model {
+  for (i in 1:Ntotal) {
+    zy[i] ~ dt( zbeta0[s[i]] + zbeta1[s[i]] * zx[i], 1/zsigma[s[i]]^2, nu)
+  }
+  # 'hyper' parameters
+  #   for normal distributions that species intercepts & slopes come from
+  for (j in 1:Nsubj) {
+    zbeta0[j] ~ dnorm(zbeta0mu, 1/(zbeta0sigma)^2)
+    zbeta1[j] ~ dnorm(zbeta1mu, 1/(zbeta1sigma)^2)
+    zsigma[j] ~ dunif( 1.0E-3, 1.0E+3 )
+  }
+  # priors on standardized scale:
+  zbeta0mu ~ dnorm(0, 1/(10)^2)
+  zbeta1mu ~ dnorm(0, 1/(10)^2)
+  zbeta0sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta1sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  nu <- nuMinusOne+1
+  nuMinusOne ~ dexp(1/29.0)
+  # Tranform to original non-standardized scale
+  for ( j in 1:Nsubj ) {
+    beta1[j] <- zbeta1[j] * ysd / xsd
+    beta0[j] <- zbeta0[j] * ysd + ym - zbeta1[j] * xm * ysd / xsd
+    sigma[j] <- zsigma[j] * ysd
+  }
+  beta1mu <- zbeta1mu * ysd / xsd
+  beta0mu <- zbeta0mu * ysd + ym - zbeta1mu * xm * ysd / xsd
+}
+"
+)
+
+modfile <- "goose_model_7SDs.txt"
+
+# Run the model with separate SDs by species
+jags_mod_7SDs <- jagsUI::jags(
+  data = goose_jags_data,
+  model.file = modfile,
+  n.iter = 10000,
+  n.burnin = 2000,
+  parameters.to.save = c(
+    "beta0",
+    "beta1",
+    "beta0mu",
+    "beta1mu",
+    "zbeta1",
+    "zbeta1mu",
+    "sigma",
+    "nu"
+  ),
+  n.chains = 3,
+  parallel = T,
+  n.thin = 10
+)
+
+# save the model output as an RDS file (for easy loading later)
+saveRDS(jags_mod_7SDs,
+        "Goose_mod_tdist_hierarchical_7SDs.rds")
+
+# view basic output of models
+jags_mod_7SDs
+
+# examine traceplots to assess model convergence
+jagsUI::traceplot(jags_mod_7SDs)
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+########################################################
+### Potential Figure
+########################################################
+
+
+### Libraries
+library(ggplot2)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sp)
+library(viridis)
+
+Final_goose_for_clim <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/Final_goose_for_clim.csv")
+
+
+
+world_data <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+
+
+goose_map<-world_data %>% ggplot() +
+    geom_sf(fill = "gray91") +coord_sf(xlim = c(-180, -50), ylim =  c(90,15), expand = FALSE)+theme_classic()+ geom_point(data = Final_goose_for_clim, aes(x = E_LON_DECIMAL_DEGREES, y = E_LAT_DECIMAL_DEGREES , fill=ENCOUNTER_YEAR), shape = 21, size=1.6)+scale_fill_viridis_c()+geom_point(data=Final_goose_for_clim, aes(B_LON_DECIMAL_DEGREES , B_LAT_DECIMAL_DEGREES ), size = 1.6, fill="salmon", color="black", pch=21)+scale_fill_discrete(name="Banding Location")+facet_wrap(~B_SPECIES_NAME)+ylab("Latitude")+xlab("Longitude")+ scale_fill_discrete(name = "Encounter Year")
+
+
+
+goose_map<-world_data %>% ggplot() +
+    geom_sf(fill = "gray91") +coord_sf(xlim = c(-180, -50), ylim =  c(90,15), expand = FALSE)+theme_classic()+geom_point(data=FINAL_GOOSE_DATA, aes(B_LON_DECIMAL_DEGREES , B_LAT_DECIMAL_DEGREES ), size = 1.6, fill="salmon", color="black", pch=21)+scale_fill_discrete(name="Banding Location")+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+### Things to consider - if banding locations have changed (may have to cluster the data)
+          ### differences in sample size
+          ### spatial autocorrelation of climate data (if we choose)
+        
+
+
+
+```
+
+
+
+
+
+
+```
+
+
