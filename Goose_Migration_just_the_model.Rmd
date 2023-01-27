@@ -1,0 +1,182 @@
+---
+title: "Goose Migration Sept 2022"
+author: "Shannon"
+date: '2022-09-27'
+output: html_document
+---
+
+# Load libraries; load & format final data
+```{r}
+library(dplyr) ### Data manipulation
+library(tidyverse) #dataframe manipulation and to remove NAs from columns
+
+### Import data
+FINAL_GOOSE_DATA <- read.csv("data/FINAL_GOOSE_DATA.csv")
+
+# format data for JAGS
+goose_jags_data <- list(
+  y = FINAL_GOOSE_DATA$DISTANCE,
+  x = FINAL_GOOSE_DATA$ENCOUNTER_YEAR,
+  s = as.numeric(as.factor(FINAL_GOOSE_DATA$B_SPECIES_NAME)),
+  Nsubj = length(unique(FINAL_GOOSE_DATA$B_SPECIES_NAME)),
+  lat=FINAL_GOOSE_DATA$B_LAT_DECIMAL_DEGREES
+)
+```
+# Bayesian models
+```{r}
+# Write the JAGS model (now allowing each spp. to have its own level of "noise"
+
+#SC notes: "z" in the parameter names are standardized eg. transform the data so that the credible regression lines do not suffer from strong correlations between their slopes and intercepts (prevent MCMC overlap in sampling). "mean centering (eg. re-scaling)" so that their respective SD are = 1, this first chunk below to send the standardized data to JAGS and JAGS will return parameter values, which will then need to be converted back to original scales. This is called the data block
+
+### Model block 
+
+cat(file = "goose_model_SC.txt",
+"
+data {
+Ntotal <- length(y)
+xm <- mean(x)
+ym <- mean(y)
+xsd <- sd(x)
+ysd <- sd(y)
+for (i in 1:length(y)) {
+  zx[i] <- (x[i] - xm) / xsd
+  zy[i] <- (y[i] - ym) / ysd
+}
+}
+
+model {
+  for (i in 1:Ntotal) {
+    zy[i] ~ dt(zbeta0[s[i]] + zbeta1[s[i]] * zbeta2[s[i]] * zx[i], 1/zsigma[s[i]]^2, nu)
+  }
+  # 'hyper' parameters
+  #   for normal distributions that species intercepts & slopes come from
+  for (j in 1:Nsubj) {
+    zbeta0[j] ~ dnorm(zbeta0mu, 1/(zbeta0sigma)^2)
+    zbeta1[j] ~ dnorm(zbeta1mu, 1/(zbeta1sigma)^2)
+    zbeta2[j] ~ dnorm(zbeta2mu, 1/(zbeta2sigma)^2) 
+    zsigma[j] ~ dunif( 1.0E-3, 1.0E+3 )
+  }
+  # priors on standardized scale:
+  zbeta0mu ~ dnorm(0, 1/(10)^2)
+  zbeta1mu ~ dnorm(0, 1/(10)^2)
+  zbeta2mu ~ dnorm(0, 1/(10)^2)
+  zbeta0sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta1sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta2sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  nu <- nuMinusOne+1
+  nuMinusOne ~ dexp(1/29.0)
+  # Tranform to original non-standardized scale
+  for ( j in 1:Nsubj ) {
+    beta1[j] <- zbeta2[j] * ysd / xsd
+    beta1[j] <- zbeta1[j] * ysd / xsd
+    beta0[j] <- zbeta0[j] * ysd + ym - zbeta1[j] * xm * ysd / xsd
+    sigma[j] <- zsigma[j] * ysd
+  }
+  beta2mu <- zbeta2mu * ysd / xsd
+  beta1mu <- zbeta1mu * ysd / xsd
+  beta0mu <- zbeta0mu * ysd + ym - zbeta1mu * xm * ysd / xsd
+}
+"
+)
+
+modfile <- "goose_model_SC.txt"
+
+# Run the model with separate SDs by species
+jags_mod_7SDs <- jagsUI::jags(
+  data = goose_jags_data,
+  model.file = modfile,
+  n.iter = 10000,
+  n.burnin = 2000,
+  parameters.to.save = c(
+    "beta0",
+    "beta1",
+    "beta2",
+    "beta0mu",
+    "beta1mu",
+    "beta2mu",
+    "zbeta1",
+    "zbeta1mu",
+    "sigma",
+    "nu"
+  ),
+  n.chains = 3,
+  parallel = T,
+  n.thin = 10
+)
+
+# save the model output as an RDS file (for easy loading later)
+saveRDS(jags_mod_7SDs,
+        "Goose_mod_tdist_hierarchical_7SDs.rds")
+
+# view basic output of models
+jags_mod_7SDs
+
+# examine traceplots to assess model convergence
+jagsUI::traceplot(jags_mod_7SDs)
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+########################################################
+### Potential Figure
+########################################################
+
+
+### Libraries
+library(ggplot2)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sp)
+library(viridis)
+
+Final_goose_for_clim <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/Final_goose_for_clim.csv")
+
+
+
+world_data <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+
+
+goose_map<-world_data %>% ggplot() +
+    geom_sf(fill = "gray91") +coord_sf(xlim = c(-180, -50), ylim =  c(90,15), expand = FALSE)+theme_classic()+ geom_point(data = Final_goose_for_clim, aes(x = E_LON_DECIMAL_DEGREES, y = E_LAT_DECIMAL_DEGREES , fill=ENCOUNTER_YEAR), shape = 21, size=1.6)+scale_fill_viridis_c()+geom_point(data=Final_goose_for_clim, aes(B_LON_DECIMAL_DEGREES , B_LAT_DECIMAL_DEGREES ), size = 1.6, fill="salmon", color="black", pch=21)+scale_fill_discrete(name="Banding Location")+facet_wrap(~B_SPECIES_NAME)+ylab("Latitude")+xlab("Longitude")+ scale_fill_discrete(name = "Encounter Year")
+
+
+
+goose_map<-world_data %>% ggplot() +
+    geom_sf(fill = "gray91") +coord_sf(xlim = c(-180, -50), ylim =  c(90,15), expand = FALSE)+theme_classic()+geom_point(data=FINAL_GOOSE_DATA, aes(B_LON_DECIMAL_DEGREES , B_LAT_DECIMAL_DEGREES ), size = 1.6, fill="salmon", color="black", pch=21)+scale_fill_discrete(name="Banding Location")+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+### Things to consider - if banding locations have changed (may have to cluster the data)
+          ### differences in sample size
+          ### spatial autocorrelation of climate data (if we choose)
+        
+
+
+
+```
+
+
+
+
+
