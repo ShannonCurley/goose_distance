@@ -3,3 +3,10 @@
 .RData
 .Ruserdata
 /data
+/writing
+/output
+*.png
+*.jpg
+*.rds
+goose_draft
+.DS_Store

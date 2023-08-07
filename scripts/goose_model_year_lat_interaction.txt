@@ -1,0 +1,71 @@
+
+data {
+Ntotal <- length(y)
+
+for (i in 1:length(y)) {
+ylatint[i] <- x[i] * lat[i] 
+# create data for interaction; multiply year x lat
+}
+
+xm <- mean(x)
+latm <- mean(lat)
+# ylatintm <- mean(ylatint)
+ym <- mean(y)
+xsd <- sd(x)
+latsd <- sd(lat)
+# ylatintsd <- sd(ylatint) 
+ysd <- sd(y)
+for (i in 1:length(y)) {
+  zx[i] <- (x[i] - xm) / xsd
+  zlat[i] <- (lat[i] - latm) / latsd
+  # zylatint[i] <- (ylatint[i] - ylatintm) / ylatintsd
+  zy[i] <- (y[i] - ym) / ysd
+}
+}
+
+model {
+  for (i in 1:Ntotal) {
+    zy[i] ~ dt(zbeta0[s[i]] + zbeta1[s[i]] * zx[i] + 
+        zbeta2[s[i]] * zlat[i],# + zbeta3[s[i]] * zx[i] * zlat[i], 
+    1/zsigma[s[i]]^2, nu)
+  }
+  # 'hyper' parameters
+  #   for normal distributions that species intercepts & slopes come from
+  for (j in 1:Nsubj) {
+    zbeta0[j] ~ dnorm(zbeta0mu, 1/(zbeta0sigma)^2)
+    zbeta1[j] ~ dnorm(zbeta1mu, 1/(zbeta1sigma)^2)
+    zbeta2[j] ~ dnorm(0, 1/(10)^2) # dnorm(zbeta2mu, 1/(zbeta2sigma)^2) 
+    # zbeta3[j] ~ dnorm(zbeta3mu, 1/(zbeta3sigma)^2) 
+    zsigma[j] ~ dunif( 1.0E-3, 1.0E+3 )
+  }
+  # priors on standardized scale:
+  zbeta0mu ~ dnorm(0, 1/(10)^2)
+  zbeta1mu ~ dnorm(0, 1/(10)^2)
+  # zbeta2mu ~ dnorm(0, 1/(10)^2)
+  # zbeta3mu ~ dnorm(0, 1/(10)^2)
+  zbeta0sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta1sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  # zbeta2sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  # zbeta3sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  nu <- nuMinusOne+1
+  nuMinusOne ~ dexp(1/29.0)
+  
+  # # Tranform to original non-standardized scale
+  # for ( j in 1:Nsubj ) {
+  #   beta3[j] <- zbeta3[j] * ysd / ylatintsd
+  #   beta2[j] <- zbeta2[j] * ysd / latsd
+  #   beta1[j] <- zbeta1[j] * ysd / xsd
+  #   # NOTE: need to look up how to back transform when 2 ind. variables
+  #   # I don't think beta0 will be correct as written
+  #   leaving the original here (below)
+  #   beta0[j] <- zbeta0[j] * ysd + ym - zbeta1[j] * xm * ysd / xsd
+  #   trying out eq from https://stackoverflow.com/questions/23642111/how-to-unscale-the-coefficients-from-an-lmer-model-fitted-with-a-scaled-respon
+  #   beta0[j] <- zbeta0[j] * ysd + ym - (zbeta1[j] * xm) + (zbeta2[j] * latm) + (zbeta3[j] * ylatintm)
+  #   sigma[j] <- zsigma[j] * ysd
+  # }
+  # beta3mu <- zbeta3mu * ysd / xsd
+  # beta2mu <- zbeta2mu * ysd / xsd
+  # beta1mu <- zbeta1mu * ysd / xsd
+  # # NOTE: same goes here. beta0mu won't be correct until fixed
+  # beta0mu <- zbeta0mu * ysd + ym - zbeta1mu * xm * ysd / xsd
+}

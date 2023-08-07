@@ -1,0 +1,63 @@
+
+data {
+xm <- mean(x)
+latm <- mean(lat)
+intm <- mean(int)
+ym <- mean(y)
+xsd <- sd(x)
+latsd <- sd(lat)
+intsd <- sd(int)
+ysd <- sd(y)
+}
+model {
+  for (i in 1:Ntotal) {
+    zy[i] ~ dnorm(zbeta0[s[i]] + zbeta1[s[i]] * zx[i] + 
+        zbeta2[s[i]] * zlat[i] + zbeta3[s[i]] * zint[i],  
+    1/zsigma[s[i]]^2)
+  }
+  # 'hyper' parameters
+  #   for normal distributions that species intercepts & slopes come from
+  for (j in 1:Nsubj) {
+    zbeta0[j] ~ dnorm(zbeta0mu, 1/(zbeta0sigma)^2)
+    zbeta1[j] ~ dnorm(zbeta1mu, 1/(zbeta1sigma)^2)
+    zsigma[j] ~ dunif( 1.0E-3, 1.0E+3 )
+  }
+  
+  # setting latitude & interaction priors for geese 2,4,5, and 6
+
+for(i in c(2,4,5,6)) {  
+  zbeta2[i] ~ dnorm(zbeta2mu, 1/(zbeta2sigma)^2)
+  zbeta3[i] ~ dnorm(zbeta3mu, 1/(zbeta3sigma)^2)
+}
+
+# special latitude priors for geese 1 and 3 with no variation in latitude 
+for(i in c(1,3)) {
+zbeta2[i] ~ dnorm(0, 1/(0.001)^2) # setting slope to be near zero
+zbeta3[i] ~ dnorm(0, 1/(0.001)^2) # setting slope to be near zero  
+}
+ 
+  # priors on standardized scale:
+  zbeta0mu ~ dnorm(0, 1/(10)^2)
+  zbeta1mu ~ dnorm(0, 1/(10)^2)
+  zbeta2mu ~ dnorm(0, 1/(10)^2)
+  zbeta3mu ~ dnorm(0, 1/(10)^2)
+  zbeta0sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta1sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta2sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta3sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  
+  # Tranform to original non-standardized scale
+  for ( j in 1:Nsubj ) {
+    beta1[j] <- zbeta1[j] * ysd / xsd
+    beta2[j] <- zbeta2[j] * ysd / latsd
+    beta3[j] <- zbeta3[j] * ysd / intsd
+    beta0[j] <- zbeta0[j] * ysd + ym - ((zbeta1[j] * xm * ysd / xsd) + (zbeta2[j] * latm * ysd / latsd) +
+                (zbeta3[j] * intm * ysd / intsd))
+    sigma[j] <- zsigma[j] * ysd
+  }
+  beta1mu <- zbeta1mu * ysd / xsd
+  beta2mu <- zbeta2mu * ysd / latsd
+  beta3mu <- zbeta3mu * ysd / intsd
+  beta0mu <- zbeta0mu * ysd + ym - ((zbeta1mu * xm * ysd / xsd) + (zbeta2mu * latm * ysd / latsd) + (zbeta3mu * intm * ysd / intsd))
+  
+}

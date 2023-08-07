@@ -426,7 +426,7 @@ goose_jags_data2$int <- wiqid::standardize(goose_jags_data$int)
 jags_mod <- jagsUI::jags(
   data = goose_jags_data,
   model.file = modfile,
-  n.iter = 120000,
+  n.iter = 300000,
   n.adapt = 10000,
   parameters.to.save = c(
     "zbeta0",
@@ -466,6 +466,8 @@ jags_mod <- jagsUI::jags(
   n.thin = 3
 )
 
+saveRDS(jags_mod,
+        "output/goose_norm_hb0_hyear_hlat_int_1_3_zerolat_fix_bigrun.rds")
 jags_mod
 
 f2 <- f
@@ -606,13 +608,13 @@ sdx <- sd(f$year)
 goosesum <- do.call(rbind, goosesum.minlat_list) %>%
   bind_rows(do.call(rbind, goosesum.maxlat_list)) %>%
   rename(q2.5 = 4, q10 = 5, med = 6, q90 = 7, q97.5 = 8) %>%
-  mutate(q2.5 = meany+(q2.5*sdy),
-         med = meany+(med*sdy),
-         q97.5 = meany+(q97.5*sdy),
-         q10 = meany+(q10*sdy),
-         q90 = meany+(q90*sdy)) %>%
-  filter(!(name == "Cackling Goose" & lat == "min"),
-         !(name == "Atlantic Brant" & lat == "min"))
+  # mutate(q2.5 = meany+(q2.5*sdy),
+  #        med = meany+(med*sdy),
+  #        q97.5 = meany+(q97.5*sdy),
+  #        q10 = meany+(q10*sdy),
+  #        q90 = meany+(q90*sdy)) %>%
+  filter(!(name == "Cackling Goose" & lat == "max"),
+         !(name == "Atlantic Brant" & lat == "max"))
 
 # plot the predictions
 
@@ -639,6 +641,7 @@ goosesum %>%
   #           data = ann, hjust = 1, vjust = 1,
   #           size = 3) +
   facet_wrap(~name, scales = "free_y") +
+  scale_x_continuous(breaks = c(1,11,21,30), labels = c(1990, 2000, 2010, 2019)) +
   labs(x = "Year of banding", 
        y = "Mean distance between \n breeding and winter (km)") +
   theme_bw() +
@@ -646,9 +649,100 @@ goosesum %>%
         strip.text = element_text(size = 10)) +
   guides(linetype = "none")
 
-ggsave("goose_trends_lat_int.png", height = 6, width = 9, dpi = 400)
+ggsave("goose_trends_lat_int2.png", height = 6, width = 9, dpi = 400)
   
 ```
+# goose parameter table
+```{r}
+# load model
+mod <- 
+  readRDS("output/goose_norm_hb0_hyear_hlat_int_1_3_zerolat_fix.rds")
+
+minmax <- f %>% 
+  group_by(species) %>% 
+  summarize(min = min(lat), 
+            mean = mean(lat),
+            max = max(lat))
+
+# get predicted trends at different latitudes
+
+trendminlist <- list()
+trendmeanlist <- list()
+trendmaxlist <- list()
+for(i in 1:nrow(mod$sims.list$beta3)){
+trendminlist[[i]] <- mod$sims.list$beta1[i,] + mod$sims.list$beta3[i,]*minmax$min
+trendmeanlist[[i]] <- mod$sims.list$beta1[i,] + mod$sims.list$beta3[i,]*minmax$mean
+trendmaxlist[[i]] <- mod$sims.list$beta1[i,] + mod$sims.list$beta3[i,]*minmax$max
+}
+trendmin_cl <- apply(do.call(rbind, trendminlist), 2, FUN = function(x) quantile(x, c(0.025,0.975)))
+trendmean_cl <- apply(do.call(rbind, trendmeanlist), 2, FUN = function(x) quantile(x, c(0.025,0.975)))
+trendmax_cl <- apply(do.call(rbind, trendmaxlist), 2, FUN = function(x) quantile(x, c(0.025,0.975)))
+trendmin_m <- apply(do.call(rbind, trendminlist), 2, mean)
+trendmean_m <- apply(do.call(rbind, trendmeanlist), 2, mean)
+trendmax_m <- apply(do.call(rbind, trendmaxlist), 2, mean)
+
+# format posterior means for table
+means <- data.frame(
+sp = sort(unique(f$species)),
+int = mod$mean$beta0,
+year = mod$mean$beta1,
+lat = mod$mean$beta2,
+year_x_lat = mod$mean$beta3,
+sigma = mod$mean$sigma,
+predmin = trendmin_m,
+predmean = trendmean_m,
+predmax = trendmax_m
+) %>%
+  t()
+
+lcls <- data.frame(
+sp = sort(unique(f$species)),
+int = mod$q2.5$beta0,
+year = mod$q2.5$beta1,
+lat = mod$q2.5$beta2,
+year_x_lat = mod$q2.5$beta3,
+sigma = mod$q2.5$sigma,
+predmin = trendmin_cl[1,],
+predmean = trendmean_cl[1,],
+predmax = trendmax_cl[1,]
+) %>%
+  t()
+
+ucls <- data.frame(
+sp = sort(unique(f$species)),
+int = mod$q97.5$beta0,
+year = mod$q97.5$beta1,
+lat = mod$q97.5$beta2,
+year_x_lat = mod$q97.5$beta3,
+sigma = mod$q97.5$sigma,
+predmin = trendmin_cl[2,],
+predmean = trendmean_cl[2,],
+predmax = trendmax_cl[2,]
+) %>%
+  t()
+
+tab = data.frame(labs = c("species", "Intercept", "Year", "Latitude", "Year x Latitude", "Sigma",
+                    "Predicted trend at min. latitude (km/yr)", 
+                    "Predicted trend at mean latitude (km/yr)", 
+                    "Predicted trend at max. latitude (km/yr)"),
+          means = c(means[,1], means[,2], means[,3], means[,4], means[,5], means[,6]),
+           lcls = c(lcls[,1], lcls[,2], lcls[,3], lcls[,4], lcls[,5], lcls[,6]),
+           ucls = c(ucls[,1], ucls[,2], ucls[,3], ucls[,4], ucls[,5], ucls[,6]))
+
+library(kableExtra)
+
+tab_table <- tab %>%
+  kbl(caption = "parameters") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+tab_table
+
+# save the table to HTML file
+save_kable(tab_table, "Table_model_results.html")
+
+
+```
+
 # goose change stats
 ```{r}
 

@@ -1,0 +1,29 @@
+
+model {
+  for (i in 1:Ntotal) {
+    zy[i] ~ dt(zbeta0[s[i]] + zbeta1[s[i]] * zx[i] + 
+        zbeta2[s[i]] * zlat[i] + zbeta3[s[i]] * zx[i] * zlat[i], 
+    1/zsigma[s[i]]^2, nu)
+  }
+  # 'hyper' parameters
+  #   for normal distributions that species intercepts & slopes come from
+  for (j in 1:Nsubj) {
+    zbeta0[j] ~ dnorm(zbeta0mu, 1/(zbeta0sigma)^2)
+    zbeta1[j] ~ dnorm(zbeta1mu, 1/(zbeta1sigma)^2)
+    zbeta2[j] ~ dnorm(0, 1/(10)^2) # dnorm(zbeta2mu, 1/(zbeta2sigma)^2) 
+    zbeta3[j] ~ dnorm(0, 1/(10)^2) # dnorm(zbeta3mu, 1/(zbeta3sigma)^2) 
+    zsigma[j] ~ dunif( 1.0E-3, 1.0E+3 )
+  }
+  # priors on standardized scale:
+  zbeta0mu ~ dnorm(0, 1/(10)^2)
+  zbeta1mu ~ dnorm(0, 1/(10)^2)
+  # zbeta2mu ~ dnorm(0, 1/(10)^2)
+  # zbeta3mu ~ dnorm(0, 1/(10)^2)
+  zbeta0sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta1sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  # zbeta2sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  # zbeta3sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  nu <- nuMinusOne+1
+  nuMinusOne ~ dexp(1/29.0)
+  
+}
