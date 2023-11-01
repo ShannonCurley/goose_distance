@@ -649,14 +649,14 @@ goosesum %>%
         strip.text = element_text(size = 10)) +
   guides(linetype = "none")
 
-ggsave("goose_trends_lat_int2.png", height = 6, width = 9, dpi = 400)
+# ggsave("goose_trends_lat_int2.png", height = 6, width = 9, dpi = 400)
   
 ```
 # goose parameter table
 ```{r}
 # load model
 mod <- 
-  readRDS("output/goose_norm_hb0_hyear_hlat_int_1_3_zerolat_fix.rds")
+  readRDS("output/goose_norm_hb0_hyear_hlat_int_1_3_zerolat_fix_bigrun.rds")
 
 minmax <- f %>% 
   group_by(species) %>% 
@@ -749,11 +749,11 @@ save_kable(tab_table, "Table_model_results.html")
 # strongest decreases
 test = goosesum %>% filter(lat == "min")
 
-(t.start <- test[test$year=="1990",]$med)
-(t.end <- test[test$year=="2019",]$med)
+(t.start <- test[test$year=="1",]$med)
+(t.end <- test[test$year=="30",]$med)
 
 t.start - t.end
-# 207.5978 575.8450 315.6009 678.6047
+# 
 
 (t.start - t.end) / length(unique(goosesum$year))
 
@@ -762,11 +762,11 @@ unique(test$name)
 # strongest increases
 test = goosesum %>% filter(lat == "max")
 
-(t.start <- test[test$year=="1990",]$med)
-(t.end <- test[test$year=="2019",]$med)
+(t.start <- test[test$year=="1",]$med)
+(t.end <- test[test$year=="30",]$med)
 
 t.end - t.start
-# 207.5978 575.8450 315.6009 678.6047
+# 152.832928 151.763766  79.307081   2.706668
 
 (t.end - t.start) / length(unique(goosesum$year))
 
