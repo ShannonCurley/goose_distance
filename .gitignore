@@ -10,3 +10,5 @@
 *.rds
 goose_draft
 .DS_Store
+/scripts/old
+/figures
