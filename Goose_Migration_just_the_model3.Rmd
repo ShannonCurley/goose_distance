@@ -1,0 +1,570 @@
+---
+title: "Goose Migration Sept 2022"
+author: "Shannon"
+date: '2022-09-27'
+output: html_document
+---
+# Load libraries; load & format final data
+```{r}
+library(dplyr) ### Data manipulation
+library(ggplot2)
+'%notin%' <- Negate('%in%')
+
+# import data
+FINAL_GOOSE_DATA <- f <- read.csv("data/FINAL_GOOSE_DATA.csv") %>%
+  rename(dist = DISTANCE,
+         year = ENCOUNTER_YEAR,
+         species = B_SPECIES_NAME,
+         lat = B_LAT_DECIMAL_DEGREES,
+         lon = B_LON_DECIMAL_DEGREES
+         ) %>%
+  mutate(year = year - 1989, 
+         int = year*lat,
+         zy = wiqid::standardize(dist),
+         zx = wiqid::standardize(year),
+         zlat = wiqid::standardize(lat),
+         zlon = wiqid::standardize(lon),
+         zint = wiqid::standardize(int))
+
+# format data for JAGS
+goose_jags_data <- list(
+  y = f$dist,
+  x = as.numeric(f$year),
+  s = as.numeric(as.factor(f$species)),
+  Nsubj = length(unique(f$species)),
+  lat=f$lat,
+  lon=f$lon,
+  int=f$int,
+  zy = f$zy,
+  zx = f$zx,
+  zlat = f$zlat,
+  zlon = f$zlon,
+  zint = f$zint,
+  Ntotal = length(f$dist)
+)
+```
+# more data exploration with latitude
+```{r}
+library(ggplot2)
+ggplot(f) +
+  geom_point(aes(x = lat, y = dist, color = year)) +
+  facet_wrap(~species) +
+  viridis::scale_color_viridis(option = "inferno")
+
+ggsave("dist_v_lat.png", height = 6, width = 8, dpi = 400)
+
+```
+# Specify Bayesian model - year + latitude + year:latitude 
+Info about how to deal with interaction terms when standardizing variables...
+i.e., with standardized product of variables, not product of standardized variables
+https://stats.stackexchange.com/questions/151468/adding-interaction-terms-to-multiple-linear-regression-how-to-standardize
+https://www.statalist.org/forums/forum/general-stata-discussion/general/1501450-standardizing-an-interaction-term
+Note: JAGS code adapted from Kruschke book (Doing Bayesian...)
+```{r}
+
+### Model block 
+
+cat(file = "scripts/goose_norm_hb0_hyear_hlat_int_custom_fix.txt",
+"
+data {
+xm <- mean(x)
+latm <- mean(lat)
+intm <- mean(int)
+ym <- mean(y)
+xsd <- sd(x)
+latsd <- sd(lat)
+intsd <- sd(int)
+ysd <- sd(y)
+}
+model {
+  for (i in 1:Ntotal) {
+    zy[i] ~ dnorm(zbeta0[s[i]] + zbeta1[s[i]] * zx[i] + 
+        zbeta2[s[i]] * zlat[i] + zbeta3[s[i]] * zint[i],  
+    1/zsigma[s[i]]^2)
+  }
+  # 'hyper' parameters
+  #   for normal distributions that species intercepts & slopes come from
+  for (j in 1:Nsubj) {
+    zbeta0[j] ~ dnorm(zbeta0mu, 1/(zbeta0sigma)^2)
+    zbeta1[j] ~ dnorm(zbeta1mu, 1/(zbeta1sigma)^2)
+    zsigma[j] ~ dunif( 1.0E-3, 1.0E+3 )
+  }
+  
+  # setting latitude & interaction priors for geese 2,4,5, and 6
+
+for(i in c(2,4,5,6)) {  
+  zbeta2[i] ~ dnorm(zbeta2mu, 1/(zbeta2sigma)^2)
+  zbeta3[i] ~ dnorm(zbeta3mu, 1/(zbeta3sigma)^2)
+}
+
+# special latitude priors for geese 1 and 3 with no variation in latitude 
+for(i in c(1,3)) {
+zbeta2[i] ~ dnorm(0, 1/(0.001)^2) # setting slope to be near zero
+zbeta3[i] ~ dnorm(0, 1/(0.001)^2) # setting slope to be near zero  
+}
+ 
+  # priors on standardized scale:
+  zbeta0mu ~ dnorm(0, 1/(10)^2)
+  zbeta1mu ~ dnorm(0, 1/(10)^2)
+  zbeta2mu ~ dnorm(0, 1/(10)^2)
+  zbeta3mu ~ dnorm(0, 1/(10)^2)
+  zbeta0sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta1sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta2sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta3sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  
+  # Tranform to original non-standardized scale
+  for ( j in 1:Nsubj ) {
+    beta1[j] <- zbeta1[j] * ysd / xsd
+    beta2[j] <- zbeta2[j] * ysd / latsd
+    beta3[j] <- zbeta3[j] * ysd / intsd
+    beta0[j] <- zbeta0[j] * ysd + ym - ((zbeta1[j] * xm * ysd / xsd) + (zbeta2[j] * latm * ysd / latsd) +
+                (zbeta3[j] * intm * ysd / intsd))
+    sigma[j] <- zsigma[j] * ysd
+  }
+  beta1mu <- zbeta1mu * ysd / xsd
+  beta2mu <- zbeta2mu * ysd / latsd
+  beta3mu <- zbeta3mu * ysd / intsd
+  beta0mu <- zbeta0mu * ysd + ym - ((zbeta1mu * xm * ysd / xsd) + (zbeta2mu * latm * ysd / latsd) + (zbeta3mu * intm * ysd / intsd))
+  
+}
+"
+)
+```
+# specify simple model with only year
+```{r}
+### Model block 
+
+cat(file = "scripts/goose_norm_hb0_hyear.txt",
+"
+data {
+xm <- mean(x)
+ym <- mean(y)
+xsd <- sd(x)
+ysd <- sd(y)
+}
+
+model {
+  for (i in 1:Ntotal) {
+    zy[i] ~ dnorm(zbeta0[s[i]] + zbeta1[s[i]] * zx[i],  
+    1/zsigma[s[i]]^2)
+  }
+  
+  # 'hyper' parameters
+  #   for normal distributions that species intercepts & slopes come from
+  for (j in 1:Nsubj) {
+    zbeta0[j] ~ dnorm(zbeta0mu, 1/(zbeta0sigma)^2)
+    zbeta1[j] ~ dnorm(zbeta1mu, 1/(zbeta1sigma)^2)
+    zsigma[j] ~ dunif( 1.0E-3, 1.0E+3 )
+  }
+ 
+  # priors on standardized scale:
+  zbeta0mu ~ dnorm(0, 1/(10)^2)
+  zbeta1mu ~ dnorm(0, 1/(10)^2)
+  zbeta0sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  zbeta1sigma ~ dunif( 1.0E-3, 1.0E+3 )
+  
+  # Tranform to original non-standardized scale
+  for ( j in 1:Nsubj ) {
+    beta1[j] <- zbeta1[j] * ysd / xsd
+    beta0[j] <- zbeta0[j] * ysd + ym - zbeta1[j] * xm * ysd / xsd
+    sigma[j] <- zsigma[j] * ysd
+  }
+  beta1mu <- zbeta1mu * ysd / xsd
+  beta0mu <- zbeta0mu * ysd + ym - zbeta1mu * xm * ysd / xsd
+  
+}
+"
+)
+```
+# Run the interaction model
+Key for interpreting model output:
+
+1 = "Atlantic Brant"
+2 = Black Brant
+3 = Cackling Goose
+4 = Greater White-fronted Goose
+5 = Lesser Snow Goose
+6 = Ross's Goose
+```{r}
+modfile_int <- "scripts/goose_norm_hb0_hyear_hlat_int_custom_fix.txt" 
+modfile_noint <- "scripts/goose_norm_hb0_hyear.txt" 
+
+# Run the model with latitude and interaction (or run without those by changing model.file name)
+jags_mod <- jagsUI::jags(
+  data = goose_jags_data,
+  model.file = modfile_int,
+  n.iter = 300000,
+  n.adapt = 10000,
+  parameters.to.save = c(
+    "zbeta0",
+    "zbeta1",
+    "zbeta2",
+    "zbeta3",
+    "zbeta0mu",
+    "zbeta1mu",    
+    "zbeta2mu",    
+    "zbeta3mu",
+    "zbeta1sigma",
+    "zbeta2sigma",
+    "zbeta3sigma",
+    "zsigma",
+    "beta0",
+    "beta1",
+    "beta2",
+    "beta3",
+    "sigma",
+    "beta0mu",
+    "beta1mu",
+    "beta2mu",
+    "beta3mu",
+    "beta0u",
+    "beta1u",
+    "beta2u",
+    "beta3u",
+    "sigmau",
+    "beta0muu",
+    "beta1muu",
+    "beta2muu",
+    "beta3muu"
+  ),
+  # inits = list(inits, inits, inits),
+  n.chains = 3,
+  parallel = T,
+  n.thin = 3
+)
+
+saveRDS(jags_mod,
+        "output/goose_norm_hb0_hyear_hlat_int_1_3_zerolat_fix_bigrun.rds")
+
+# saveRDS(jags_mod,
+#         "output/goose_norm_hb0_hyear_hlat_int_1_3_zerolat_fix.rds")
+# saveRDS(jags_mod,
+#         "output/goose_norm_hb0_hyear.rds")
+
+# view basic output of models
+jags_mod
+
+# examine traceplots to assess model convergence
+jagsUI::traceplot(jags_mod)
+
+```
+# Plot goose response - with interaction
+```{r}
+# load model
+mod <- 
+  readRDS("output/goose_norm_hb0_hyear_hlat_int_1_3_zerolat_fix_bigrun.rds")
+
+# make a dataframe of goose names
+geese_names <- f %>%
+  group_by(species) %>%
+  summarize(minlat = min(lat),
+            maxlat = max(lat),
+            zminlat = min(zlat),
+            zmaxlat = max(zlat)) %>%
+  mutate(num = 1:goose_jags_data$Nsub,
+         ztrend = round(mod$mean$beta1, 5))
+
+# make a dataframe of years
+minyr <- min(f$year)
+maxyr <- max(f$year)
+yearnum <- data.frame(yearnums = seq(minyr:maxyr),
+                      years = minyr:maxyr,
+                      zyears = sort(unique(goose_jags_data$x)))
+
+# create 2 empty lists to put posterior samples into
+gooseminlatlist <- list()
+goosemaxlatlist <- list()
+ysminlatlist <- list()
+ysmaxlatlist <- list()
+
+# for each goose
+for (g in 1:goose_jags_data$Nsubj) {
+  # get posterior samples of y predictions for each year
+  for (y in 1:30) {
+    # put the samples into elements of a list by year
+    ysminlatlist[[y]] <- mod$sims.list$beta0[, g] +
+      mod$sims.list$beta1[, g] * yearnum$years[y] +
+      mod$sims.list$beta2[, g] * geese_names$minlat[g] +
+      mod$sims.list$beta3[, g] * geese_names$minlat[g] * yearnum$years[y]
+    
+    ysmaxlatlist[[y]] <- mod$sims.list$beta0[, g] +
+      mod$sims.list$beta1[, g] * yearnum$years[y] +
+      mod$sims.list$beta2[, g] * geese_names$maxlat[g] +
+      mod$sims.list$beta3[, g] * geese_names$maxlat[g] * yearnum$years[y]
+
+  }
+  
+  # put the list of predictions into a big list with all geese
+  gooseminlatlist[[g]] <- ysminlatlist
+  goosemaxlatlist[[g]] <- ysmaxlatlist
+  
+}
+
+# make an empty list to put summarized posteriors into
+goosesum.minlat_list <- list()
+goosesum.maxlat_list <- list()
+
+# summarize the posteriors of predicted y for each species and year
+for(i in 1:goose_jags_data$Nsubj){
+# for each goose
+# first make a dataframe of goose name and year
+  # then bind it to posterior quantiles (min latitude)
+goosesum.minlat_list[[i]] <- 
+  cbind(data.frame(name = geese_names$species[i],
+                 year = minyr:maxyr,
+                 lat = "min"),
+      data.frame(
+do.call(rbind,
+lapply(gooseminlatlist[[i]], 
+       FUN = function(x) quantile(x, c(0.025,0.10, 0.5, 0.9, 0.975)))
+)
+)
+)
+
+# max lat
+goosesum.maxlat_list[[i]] <- 
+  cbind(data.frame(name = geese_names$species[i],
+                 year = minyr:maxyr,
+                 lat = "max"),
+      data.frame(
+do.call(rbind,
+lapply(goosemaxlatlist[[i]], 
+       FUN = function(x) quantile(x, c(0.025,0.10, 0.5, 0.9, 0.975)))
+)
+)
+)
+
+}
+
+meany <- mean(f$dist)
+sdy <- sd(f$dist)
+sdx <- sd(f$year)
+
+# collapse the list of posterior summaries into a df for plotting
+goosesum <- do.call(rbind, goosesum.minlat_list) %>%
+  bind_rows(do.call(rbind, goosesum.maxlat_list)) %>%
+  rename(q2.5 = 4, q10 = 5, med = 6, q90 = 7, q97.5 = 8) %>%
+  # mutate(q2.5 = meany+(q2.5*sdy),
+  #        med = meany+(med*sdy),
+  #        q97.5 = meany+(q97.5*sdy),
+  #        q10 = meany+(q10*sdy),
+  #        q90 = meany+(q90*sdy)) %>%
+  filter(!(name == "Cackling Goose" & lat == "max"),
+         !(name == "Atlantic Brant" & lat == "max"))
+
+# plot the predictions
+
+# make dataframe for trend annotations
+maxdist <- goosesum %>% group_by(name) %>% summarize(max = max(q97.5)+100)
+ann <- geese_names %>% 
+  left_join(maxdist, by = c("species" = "name")) %>%
+  mutate(trend = ztrend * sdy / sdx,
+    trend2 = paste0(round(trend,2), " km/yr")) %>%
+  rename(name = species)
+
+goosesum %>%
+  ggplot() +
+  geom_ribbon(aes(x = year, ymin = q2.5, 
+                  ymax = q97.5, fill = lat, group = lat),
+              fill = "gray", alpha = 0.6) +
+  geom_ribbon(aes(x = year, ymin = q10, 
+                  ymax = q90, group = lat, fill = lat),
+              fill = "gray", alpha = 0.6) +
+  geom_line(aes(x = year, y = med, linetype = lat),
+            color = "black", linewidth = 1) +
+  # geom_text(aes(x = 2017, y = max, 
+  #                      group = name, label = trend2),
+  #           data = ann, hjust = 1, vjust = 1,
+  #           size = 3) +
+  facet_wrap(~name, scales = "free_y") +
+  scale_x_continuous(breaks = c(1,11,21,30), labels = c(1990, 2000, 2010, 2019)) +
+  labs(x = "Year of banding", 
+       y = "Mean distance between \n breeding and winter (km)") +
+  theme_bw() +
+  theme(text = element_text(size = 12),
+        strip.text = element_text(size = 10)) +
+  guides(linetype = "none")
+
+# ggsave("goose_trends_lat_int2.png", height = 6, width = 9, dpi = 400)
+  
+```
+# goose parameter table
+```{r}
+# load model
+mod <- 
+  readRDS("output/goose_norm_hb0_hyear_hlat_int_1_3_zerolat_fix_bigrun.rds")
+
+minmax <- f %>% 
+  group_by(species) %>% 
+  summarize(min = min(lat), 
+            mean = mean(lat),
+            max = max(lat))
+
+# get predicted trends at different latitudes
+
+trendminlist <- list()
+trendmeanlist <- list()
+trendmaxlist <- list()
+for(i in 1:nrow(mod$sims.list$beta3)){
+trendminlist[[i]] <- mod$sims.list$beta1[i,] + mod$sims.list$beta3[i,]*minmax$min
+trendmeanlist[[i]] <- mod$sims.list$beta1[i,] + mod$sims.list$beta3[i,]*minmax$mean
+trendmaxlist[[i]] <- mod$sims.list$beta1[i,] + mod$sims.list$beta3[i,]*minmax$max
+}
+trendmin_cl <- apply(do.call(rbind, trendminlist), 2, FUN = function(x) quantile(x, c(0.025,0.975)))
+trendmean_cl <- apply(do.call(rbind, trendmeanlist), 2, FUN = function(x) quantile(x, c(0.025,0.975)))
+trendmax_cl <- apply(do.call(rbind, trendmaxlist), 2, FUN = function(x) quantile(x, c(0.025,0.975)))
+trendmin_m <- apply(do.call(rbind, trendminlist), 2, mean)
+trendmean_m <- apply(do.call(rbind, trendmeanlist), 2, mean)
+trendmax_m <- apply(do.call(rbind, trendmaxlist), 2, mean)
+
+# format posterior means for table
+means <- data.frame(
+sp = sort(unique(f$species)),
+int = mod$mean$beta0,
+year = mod$mean$beta1,
+lat = mod$mean$beta2,
+year_x_lat = mod$mean$beta3,
+sigma = mod$mean$sigma,
+predmin = trendmin_m,
+predmean = trendmean_m,
+predmax = trendmax_m
+) %>%
+  t()
+
+lcls <- data.frame(
+sp = sort(unique(f$species)),
+int = mod$q2.5$beta0,
+year = mod$q2.5$beta1,
+lat = mod$q2.5$beta2,
+year_x_lat = mod$q2.5$beta3,
+sigma = mod$q2.5$sigma,
+predmin = trendmin_cl[1,],
+predmean = trendmean_cl[1,],
+predmax = trendmax_cl[1,]
+) %>%
+  t()
+
+ucls <- data.frame(
+sp = sort(unique(f$species)),
+int = mod$q97.5$beta0,
+year = mod$q97.5$beta1,
+lat = mod$q97.5$beta2,
+year_x_lat = mod$q97.5$beta3,
+sigma = mod$q97.5$sigma,
+predmin = trendmin_cl[2,],
+predmean = trendmean_cl[2,],
+predmax = trendmax_cl[2,]
+) %>%
+  t()
+
+tab = data.frame(labs = c("species", "Intercept", "Year", "Latitude", "Year x Latitude", "Sigma",
+                    "Predicted trend at min. latitude (km/yr)", 
+                    "Predicted trend at mean latitude (km/yr)", 
+                    "Predicted trend at max. latitude (km/yr)"),
+          means = c(means[,1], means[,2], means[,3], means[,4], means[,5], means[,6]),
+           lcls = c(lcls[,1], lcls[,2], lcls[,3], lcls[,4], lcls[,5], lcls[,6]),
+           ucls = c(ucls[,1], ucls[,2], ucls[,3], ucls[,4], ucls[,5], ucls[,6]))
+
+library(kableExtra)
+
+tab_table <- tab %>%
+  kbl(caption = "parameters") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+tab_table
+
+# save the table to HTML file
+save_kable(tab_table, "Table_model_results.html")
+
+```
+# goose change stats
+```{r}
+
+# strongest decreases
+test = goosesum %>% filter(lat == "min")
+
+(t.start <- test[test$year=="1",]$med)
+(t.end <- test[test$year=="30",]$med)
+
+t.start - t.end
+# 
+
+(t.start - t.end) / length(unique(goosesum$year))
+
+unique(test$name)
+
+# strongest increases
+test = goosesum %>% filter(lat == "max")
+
+(t.start <- test[test$year=="1",]$med)
+(t.end <- test[test$year=="30",]$med)
+
+t.end - t.start
+# 152.832928 151.763766  79.307081   2.706668
+
+(t.end - t.start) / length(unique(goosesum$year))
+
+unique(test$name)
+# [1] "Atlantic Brant"              "Black Brant"                 "Cackling Goose"              "Greater White-fronted Goose"
+# [5] "Lesser Snow Goose"           "Ross's Goose"
+```
+
+
+
+
+```{r}
+########################################################
+### Potential Figure
+########################################################
+
+
+### Libraries
+library(ggplot2)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sp)
+library(viridis)
+
+Final_goose_for_clim <- read.csv("C:/Users/Shannon/Desktop/Goose_Migration_Sept_2022/Final_goose_for_clim.csv")
+
+
+
+world_data <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+
+
+goose_map<-world_data %>% ggplot() +
+    geom_sf(fill = "gray91") +coord_sf(xlim = c(-180, -50), ylim =  c(90,15), expand = FALSE)+theme_classic()+ geom_point(data = Final_goose_for_clim, aes(x = E_LON_DECIMAL_DEGREES, y = E_LAT_DECIMAL_DEGREES , fill=ENCOUNTER_YEAR), shape = 21, size=1.6)+scale_fill_viridis_c()+geom_point(data=Final_goose_for_clim, aes(B_LON_DECIMAL_DEGREES , B_LAT_DECIMAL_DEGREES ), size = 1.6, fill="salmon", color="black", pch=21)+scale_fill_discrete(name="Banding Location")+facet_wrap(~B_SPECIES_NAME)+ylab("Latitude")+xlab("Longitude")+ scale_fill_discrete(name = "Encounter Year")
+
+
+
+goose_map<-world_data %>% ggplot() +
+    geom_sf(fill = "gray91") +coord_sf(xlim = c(-180, -50), ylim =  c(90,15), expand = FALSE)+theme_classic()+geom_point(data=FINAL_GOOSE_DATA, aes(B_LON_DECIMAL_DEGREES , B_LAT_DECIMAL_DEGREES ), size = 1.6, fill="salmon", color="black", pch=21)+scale_fill_discrete(name="Banding Location")+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+### Things to consider - if banding locations have changed (may have to cluster the data)
+          ### differences in sample size
+          ### spatial autocorrelation of climate data (if we choose)
+        
+
+
+
+```
+
+
+
+
+
